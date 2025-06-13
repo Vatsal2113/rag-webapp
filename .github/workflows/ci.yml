@@ -1,0 +1,46 @@
+name: Build & Push Docker Image
+
+on:
+  push:
+    branches:
+      - main
+      - 'feature/**'
+
+jobs:
+  build-and-push:
+    runs-on: ubuntu-latest
+    steps:
+      # 1) Checkout code
+      - uses: actions/checkout@v3
+
+      # 2) Prep Docker (optional for cross-platform)
+      - name: Set up QEMU
+        uses: docker/setup-qemu-action@v2
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v2
+
+      # 3) Log in to your registry
+      - name: Log in to Docker registry
+        run: |
+          echo "${{ secrets.DOCKER_PASSWORD }}" \
+            | docker login \
+              --username "${{ secrets.DOCKER_USERNAME }}" \
+              --password-stdin ${{ secrets.REGISTRY_URL }}
+
+      # 4) Build & push the image
+      - name: Build & push
+        uses: docker/build-push-action@v4
+        with:
+          push: true
+          tags: ${{ secrets.REGISTRY_URL }}/rag-webapp:${{ github.ref_name }}-${{ github.run_number }}
+
+      # 5) Smoke-test on the runner
+      - name: Smoke test
+        run: |
+          docker run --rm -d \
+            --name rag-test \
+            -e GEMINI_API_KEY="${{ secrets.GEMINI_API_KEY }}" \
+            -p 5000:5000 \
+            ${{ secrets.REGISTRY_URL }}/rag-webapp:${{ github.ref_name }}-${{ github.run_number }}
+          sleep 5
+          curl --fail http://localhost:5000/ || (echo "App didn't respond" && exit 1)
