@@ -1,0 +1,9 @@
+<!doctype html>
+<title>Upload PDFs • Multimodal-RAG</title>
+<link rel="stylesheet" href="{{ url_for('static', filename='styles.css') }}">
+<h1>📄 Upload PDF(s)</h1>
+{% if error %}<p class="err">{{ error }}</p>{% endif %}
+<form method="post" enctype="multipart/form-data">
+  <input type="file" name="files[]" multiple accept=".pdf" required>
+  <button>Start ingestion</button>
+</form>

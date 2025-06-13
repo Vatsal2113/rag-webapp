@@ -1,0 +1,10 @@
+<!doctype html>
+<title>Processing…</title>
+<link rel="stylesheet" href="{{ url_for('static', filename='styles.css') }}">
+<h1>⏳ Ingestion in progress…</h1>
+<p id="msg">Please keep this tab open.  Large PDFs may take a few minutes.</p>
+<script type="module" src="{{ url_for('static', filename='script.js') }}"></script>
+<script type="module">
+  import { pollStatus } from "{{ url_for('static', filename='script.js') }}";
+  pollStatus("{{ job_id }}");
+</script>

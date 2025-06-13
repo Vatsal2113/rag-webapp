@@ -1,0 +1,6 @@
+﻿__pycache__/
+*.pyc
+uploads/
+*.db
+chromadb/
+_pics/
