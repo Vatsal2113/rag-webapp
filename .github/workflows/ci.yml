@@ -1,17 +1,11 @@
 name: docker-ci
 
-###############################################################################
-# 1  WHEN IT RUNS
-###############################################################################
 on:
   push:
     branches: [ "feature/save-ingest-history" ]
   pull_request:
     branches: [ "feature/save-ingest-history" ]
 
-###############################################################################
-# 2  JOB DEFINITION
-###############################################################################
 jobs:
   build-and-push:
     runs-on: ubuntu-latest
@@ -19,44 +13,45 @@ jobs:
       IMAGE_NAME: rag-webapp
 
     steps:
-    # ─────────────────── 1) CHECK OUT SOURCE ────────────────────────────────
+    # ─── 1. checkout ────────────────────────────────────────────────────────
     - uses: actions/checkout@v4
 
-    # ─────────────────── 2) BUILD TOOLS (QEMU + Buildx) ─────────────────────
+    # ─── 2. buildx & QEMU (multi-arch) ───────────────────────────────────────
     - uses: docker/setup-qemu-action@v3
     - uses: docker/setup-buildx-action@v3
 
-    # ─────────────────── 3) VERIFY SECRETS EXIST ────────────────────────────
-    - name: Verify Docker secrets
+    # ─── 3. decide where to push ────────────────────────────────────────────
+    - name: Compose full image name
+      id: img
       run: |
-        if [ -z "${{ secrets.DOCKER_USERNAME }}" ] || [ -z "${{ secrets.DOCKER_PASSWORD }}" ]; then
-          echo "::error ::DOCKER_USERNAME or DOCKER_PASSWORD secret is missing."
-          exit 1
+        if [ -z "${{ secrets.REGISTRY_URL }}" ] || [ "${{ secrets.REGISTRY_URL }}" = "docker.io" ]; then
+          echo "REGISTRY=docker.io"           >> "$GITHUB_OUTPUT"
+          echo "IMAGE=${{ secrets.DOCKER_USERNAME }}/${{ env.IMAGE_NAME }}" >> "$GITHUB_OUTPUT"
+        else
+          echo "REGISTRY=${{ secrets.REGISTRY_URL }}" >> "$GITHUB_OUTPUT"
+          echo "IMAGE=${{ secrets.REGISTRY_URL }}/${{ env.IMAGE_NAME }}"    >> "$GITHUB_OUTPUT"
         fi
 
-    # ─────────────────── 4) LOGIN TO REGISTRY (defaults to Docker Hub) ─────
-    - name: Log in to Docker registry
+    # ─── 4. login to that registry ──────────────────────────────────────────
+    - name: Log in to container registry
       uses: docker/login-action@v3
       with:
-        # If you’re pushing to Docker Hub you can omit "registry".
-        # If you set REGISTRY_URL (e.g. "docker.io" or "myregistry.example.com")
-        # the same value is used for login and for tags.
-        registry: ${{ secrets.REGISTRY_URL || '' }}
+        registry: ${{ steps.img.outputs.REGISTRY }}
         username: ${{ secrets.DOCKER_USERNAME }}
         password: ${{ secrets.DOCKER_PASSWORD }}
 
-    # ─────────────────── 5) SHORT COMMIT-SHA TAG ────────────────────────────
+    # ─── 5. short SHA for deterministic tag ─────────────────────────────────
     - id: vars
       run: echo "SHA=${GITHUB_SHA::7}" >> "$GITHUB_OUTPUT"
 
-    # ─────────────────── 6) BUILD & PUSH ────────────────────────────────────
-    - name: Build and push image
+    # ─── 6. build & push (uses the IMAGE value picked above) ────────────────
+    - name: Build and push
       uses: docker/build-push-action@v5
       with:
         context: .
         push: true
         tags: |
-          ${{ secrets.DOCKER_USERNAME }}/rag-webapp:latest
-          ${{ secrets.DOCKER_USERNAME }}/rag-webapp:${{ steps.vars.outputs.SHA }}
-        cache-from: type=registry,ref=${{ secrets.DOCKER_USERNAME }}/rag-webapp:buildcache
-        cache-to:   type=registry,ref=${{ secrets.DOCKER_USERNAME }}/rag-webapp:buildcache,mode=max
+          ${{ steps.img.outputs.IMAGE }}:latest
+          ${{ steps.img.outputs.IMAGE }}:${{ steps.vars.outputs.SHA }}
+        cache-from: type=registry,ref=${{ steps.img.outputs.IMAGE }}:buildcache
+        cache-to:   type=registry,ref=${{ steps.img.outputs.IMAGE }}:buildcache,mode=max
