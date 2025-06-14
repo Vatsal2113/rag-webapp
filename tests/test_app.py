@@ -1,8 +1,8 @@
-from app import _allowed_file, jobs                                 # :contentReference[oaicite:1]{index=1}
+from app import _allowed_file, jobs
 
 def test_allowed_file():
-    assert _allowed_file("plot.pdf")
-    assert not _allowed_file("x.exe")
+    assert _allowed_file("report.pdf")
+    assert not _allowed_file("virus.exe")
 
 def test_status_endpoint(client):
     jobs["abc"] = {"status": "pending", "error": None}

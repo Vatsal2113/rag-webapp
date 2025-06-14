@@ -1,52 +1,69 @@
 name: CI – build & unit-tests
 
+###############################################################################
+# When the workflow runs
+###############################################################################
 on:
   push:
     branches:
       - main
-      - 'feature/**'
+      - 'feature/**'            # any feature branch
   pull_request:
     branches:
       - main
       - 'feature/**'
 
+###############################################################################
+# One job that does everything: test + Docker build
+###############################################################################
 jobs:
   build-and-test:
     runs-on: ubuntu-latest
 
     steps:
-    # 1) source
-    - uses: actions/checkout@v4
+    # ─────────────────────────────────────────────────────────────────────────
+    # 1) Check out the repository
+    # ─────────────────────────────────────────────────────────────────────────
+    - name: Checkout source
+      uses: actions/checkout@v4
 
-    # 2) fast unit-tests in the host Python
+    # ─────────────────────────────────────────────────────────────────────────
+    # 2) Set up Python & run pytest
+    # ─────────────────────────────────────────────────────────────────────────
     - name: Set up Python
       uses: actions/setup-python@v5
       with:
         python-version: '3.11'
 
-    - name: Install dependencies
+    - name: Install dependencies & run tests
+      env:
+        # Add repo root to the import path so "import app" works
+        PYTHONPATH: ${{ github.workspace }}
       run: |
         python -m pip install --upgrade pip
         pip install -r requirements.txt
+        pytest -q
 
-    - name: Run pytest
-      run: pytest -q
-
-    # 3) build Docker image (no push) to ensure Dockerfile stays valid
-    - name: Set up Buildx
+    # ─────────────────────────────────────────────────────────────────────────
+    # 3) Build the Docker image (local only – no push)
+    # ─────────────────────────────────────────────────────────────────────────
+    - name: Set up Docker Buildx
       uses: docker/setup-buildx-action@v3
 
-    - name: Build Docker image (local only)
+    - name: Build image
       uses: docker/build-push-action@v5
       with:
         context: .
-        load: true           # image is loaded into the runner
-        push: false
+        load: true              # load the image into the runner’s Docker engine
+        push: false             # don't push anywhere
         tags: test-img:ci
 
-    # 4) smoke test: does the container start?
+    # ─────────────────────────────────────────────────────────────────────────
+    # 4) Smoke test – does the container stay up for 5 seconds?
+    # ─────────────────────────────────────────────────────────────────────────
     - name: Smoke-check container starts
       run: |
         docker run -d --name app -p 5000:5000 test-img:ci
         sleep 5
         docker ps --filter "name=app" --filter "status=running" | grep app
+
