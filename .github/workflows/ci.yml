@@ -1,57 +1,34 @@
-name: docker-ci
+name: docker-build-and-test
 
 on:
   push:
-    branches: [ "feature/save-ingest-history" ]
+    branches: [ "feature/save-ingest-history" ]   # or any branches you like
   pull_request:
     branches: [ "feature/save-ingest-history" ]
 
 jobs:
-  build-and-push:
+  build-test:
     runs-on: ubuntu-latest
-    env:
-      IMAGE_NAME: rag-webapp
 
     steps:
-    # ─── 1. checkout ────────────────────────────────────────────────────────
-    - uses: actions/checkout@v4
+    # ─── 1) Get the source code ─────────────────────────────────────────────
+    - name: Checkout code
+      uses: actions/checkout@v4
 
-    # ─── 2. buildx & QEMU (multi-arch) ───────────────────────────────────────
-    - uses: docker/setup-qemu-action@v3
+    # ─── 2) Set up Buildx (multi-arch builder) ──────────────────────────────
     - uses: docker/setup-buildx-action@v3
 
-    # ─── 3. decide where to push ────────────────────────────────────────────
-    - name: Compose full image name
-      id: img
-      run: |
-        if [ -z "${{ secrets.REGISTRY_URL }}" ] || [ "${{ secrets.REGISTRY_URL }}" = "docker.io" ]; then
-          echo "REGISTRY=docker.io"           >> "$GITHUB_OUTPUT"
-          echo "IMAGE=${{ secrets.DOCKER_USERNAME }}/${{ env.IMAGE_NAME }}" >> "$GITHUB_OUTPUT"
-        else
-          echo "REGISTRY=${{ secrets.REGISTRY_URL }}" >> "$GITHUB_OUTPUT"
-          echo "IMAGE=${{ secrets.REGISTRY_URL }}/${{ env.IMAGE_NAME }}"    >> "$GITHUB_OUTPUT"
-        fi
-
-    # ─── 4. login to that registry ──────────────────────────────────────────
-    - name: Log in to container registry
-      uses: docker/login-action@v3
-      with:
-        registry: ${{ steps.img.outputs.REGISTRY }}
-        username: ${{ secrets.DOCKER_USERNAME }}
-        password: ${{ secrets.DOCKER_PASSWORD }}
-
-    # ─── 5. short SHA for deterministic tag ─────────────────────────────────
-    - id: vars
-      run: echo "SHA=${GITHUB_SHA::7}" >> "$GITHUB_OUTPUT"
-
-    # ─── 6. build & push (uses the IMAGE value picked above) ────────────────
-    - name: Build and push
+    # ─── 3) Build the image, but DO **NOT** push anywhere ───────────────────
+    - name: Build local image
+      id: build
       uses: docker/build-push-action@v5
       with:
         context: .
-        push: true
-        tags: |
-          ${{ steps.img.outputs.IMAGE }}:latest
-          ${{ steps.img.outputs.IMAGE }}:${{ steps.vars.outputs.SHA }}
-        cache-from: type=registry,ref=${{ steps.img.outputs.IMAGE }}:buildcache
-        cache-to:   type=registry,ref=${{ steps.img.outputs.IMAGE }}:buildcache,mode=max
+        load: true                 # load the image into the runner’s Docker engine
+        push: false                # <-- no registry involved
+        tags: test-image:ci
+
+    # ─── 4) Run pytest inside the freshly built image ───────────────────────
+    - name: Run unit tests
+      run: |
+        docker run --rm test-image:ci pytest -q
