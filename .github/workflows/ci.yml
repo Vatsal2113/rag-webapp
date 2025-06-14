@@ -1,60 +1,62 @@
-name: docker-ci                # the workflow’s display name
+name: docker-ci
 
 ###############################################################################
-# 1. WHEN IT RUNS
+# 1  WHEN IT RUNS
 ###############################################################################
 on:
   push:
-    branches: [ "feature/save-ingest-history" ]   # build just this branch
+    branches: [ "feature/save-ingest-history" ]
   pull_request:
-    branches: [ "feature/save-ingest-history" ]   # and PRs targeting it
+    branches: [ "feature/save-ingest-history" ]
 
 ###############################################################################
-# 2. THE JOB
+# 2  JOB DEFINITION
 ###############################################################################
 jobs:
   build-and-push:
     runs-on: ubuntu-latest
-
-    # Secrets *can* be promoted into a job-level env block.
-    # (They are NOT allowed in the top-level env: section.)
     env:
       IMAGE_NAME: rag-webapp
-      DOCKERHUB_USER: ${{ secrets.DOCKERHUB_USERNAME }}   # safe here
 
     steps:
-    # ───────────────────── CHECKOUT CODE ─────────────────────────────────────
-    - name: Checkout source
-      uses: actions/checkout@v4
+    # ─────────────────── 1) CHECK OUT SOURCE ────────────────────────────────
+    - uses: actions/checkout@v4
 
-    # ───────────────────── BUILD TOOLS ───────────────────────────────────────
-    - name: Set up QEMU (multi-arch, optional)
-      uses: docker/setup-qemu-action@v3
+    # ─────────────────── 2) BUILD TOOLS (QEMU + Buildx) ─────────────────────
+    - uses: docker/setup-qemu-action@v3
+    - uses: docker/setup-buildx-action@v3
 
-    - name: Set up Docker Buildx
-      uses: docker/setup-buildx-action@v3
+    # ─────────────────── 3) VERIFY SECRETS EXIST ────────────────────────────
+    - name: Verify Docker secrets
+      run: |
+        if [ -z "${{ secrets.DOCKER_USERNAME }}" ] || [ -z "${{ secrets.DOCKER_PASSWORD }}" ]; then
+          echo "::error ::DOCKER_USERNAME or DOCKER_PASSWORD secret is missing."
+          exit 1
+        fi
 
-    # ───────────────────── LOGIN TO DOCKER HUB ───────────────────────────────
-    - name: Log in to Docker Hub
+    # ─────────────────── 4) LOGIN TO REGISTRY (defaults to Docker Hub) ─────
+    - name: Log in to Docker registry
       uses: docker/login-action@v3
       with:
-        username: ${{ secrets.DOCKERHUB_USERNAME }}   # ← direct secret reference
-        password: ${{ secrets.DOCKERHUB_TOKEN }}      # ← direct secret reference
+        # If you’re pushing to Docker Hub you can omit "registry".
+        # If you set REGISTRY_URL (e.g. "docker.io" or "myregistry.example.com")
+        # the same value is used for login and for tags.
+        registry: ${{ secrets.REGISTRY_URL || '' }}
+        username: ${{ secrets.DOCKER_USERNAME }}
+        password: ${{ secrets.DOCKER_PASSWORD }}
 
-    # ───────────────────── DERIVE TAGS ───────────────────────────────────────
-    - name: Derive image tags
-      id: vars
-      run: |
-        echo "SHA=${GITHUB_SHA::7}" >> "$GITHUB_OUTPUT"
+    # ─────────────────── 5) SHORT COMMIT-SHA TAG ────────────────────────────
+    - id: vars
+      run: echo "SHA=${GITHUB_SHA::7}" >> "$GITHUB_OUTPUT"
 
-    # ───────────────────── BUILD & PUSH ──────────────────────────────────────
+    # ─────────────────── 6) BUILD & PUSH ────────────────────────────────────
     - name: Build and push image
       uses: docker/build-push-action@v5
       with:
         context: .
         push: true
         tags: |
-          ${{ env.DOCKERHUB_USER }}/${{ env.IMAGE_NAME }}:latest
-          ${{ env.DOCKERHUB_USER }}/${{ env.IMAGE_NAME }}:${{ steps.vars.outputs.SHA }}
-        cache-from: type=registry,ref=${{ env.DOCKERHUB_USER }}/${{ env.IMAGE_NAME }}:buildcache
-        cache-to:   type=registry,ref=${{ env.DOCKERHUB_USER }}/${{ env.IMAGE_NAME }}:buildcache,mode=max
+          ${{ secrets.DOCKER_USERNAME }}/rag-webapp:latest
+          ${{ secrets.DOCKER_USERNAME }}/rag-webapp:${{ steps.vars.outputs.SHA }}
+        cache-from: type=registry,ref=${{ secrets.DOCKER_USERNAME }}/rag-webapp:buildcache
+        cache-to:   type=registry,ref=${{ secrets.DOCKER_USERNAME }}/rag-webapp:buildcache,mode=max
