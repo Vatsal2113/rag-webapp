@@ -1,16 +1,20 @@
 # app.py
-import os, uuid, threading
+import os
+import uuid
+import threading
+import datetime
 from pathlib import Path
-
 from flask import (
     Flask, render_template, request,
     redirect, url_for, jsonify, session
 )
 from werkzeug.utils import secure_filename
 
-from ingest import run_ingestion                   # wrapper around your pipeline
+from ingest import run_ingestion                   # your ingestion pipeline
+from rag import RagChat                            # your RAG wrapper
 
-# ──────────────────────────── config ────────────────────────────
+# ─── CONFIG ──────────────────────────────────────────────────────
+
 ALLOWED_EXT = {"pdf"}
 UPLOAD_DIR  = Path("uploads")
 UPLOAD_DIR.mkdir(exist_ok=True)
@@ -18,71 +22,64 @@ UPLOAD_DIR.mkdir(exist_ok=True)
 app = Flask(__name__)
 app.secret_key = os.getenv("SECRET_KEY", "dev")    # session signing key
 
-# In-memory job registry: job_id -> dict(status, rag, error)
-jobs: dict[str, dict] = {}
+jobs: dict[str, dict] = {}  # track background ingestion jobs
 
-def _allowed(name: str) -> bool:
-    return "." in name and name.rsplit(".", 1)[1].lower() in ALLOWED_EXT
+# ─── UTILITY FUNCTIONS ───────────────────────────────────────────
 
-# ──────────────────────────── routes ────────────────────────────
+def _allowed_file(fn: str) -> bool:
+    return "." in fn and fn.rsplit(".", 1)[1].lower() in ALLOWED_EXT
+
+def _log_conversation(job_id: str, question: str, answer: str):
+    """Append a timestamped RAG conversation entry to conversation_history.log."""
+    ts = datetime.datetime.utcnow().isoformat()
+    entry = f"{ts} | job_id={job_id} | Q={question!r} | A={answer!r}\n"
+    p = Path("conversation_history.log")
+    with p.open("a", encoding="utf-8") as f:
+        f.write(entry)
+
+# ─── ROUTES: UPLOAD & INGESTION ────────────────────────────────────
+
 @app.route("/", methods=["GET", "POST"])
 def index():
     if request.method == "POST":
-        files = request.files.getlist("files[]")
-        if not files:
-            return render_template("index.html",
-                                   error="Please choose at least one PDF.")
+        f = request.files.get("file")
+        if not f or not _allowed_file(f.filename):
+            return "Please upload a PDF file", 400
+        fn = secure_filename(f.filename)
+        dest = UPLOAD_DIR / f"{uuid.uuid4().hex}_{fn}"
+        f.save(dest)
 
-        job_id   = str(uuid.uuid4())
-        save_dir = UPLOAD_DIR / job_id
-        save_dir.mkdir(parents=True, exist_ok=True)
+        # kick off ingestion in background
+        job_id = uuid.uuid4().hex
+        jobs[job_id] = {"status": "pending", "error": None, "rag": None}
 
-        for f in files:
-            if _allowed(f.filename):
-                f.save(save_dir / secure_filename(f.filename))
+        def _worker(path, jid):
+            try:
+                rag = run_ingestion(str(path))
+                jobs[jid].update(status="done", rag=rag)
+            except Exception as e:
+                jobs[jid].update(status="error", error=str(e))
 
-        # register + spawn worker
-        jobs[job_id] = {"status": "pending", "rag": None, "error": None}
-        threading.Thread(target=_run_job,
-                         args=(job_id, save_dir),
-                         daemon=True).start()
-
+        threading.Thread(target=_worker, args=(dest, job_id), daemon=True).start()
         session["job_id"] = job_id
         return redirect(url_for("progress", job_id=job_id))
 
     return render_template("index.html")
 
-# ───────────────── background worker ────────────────────────────
-def _run_job(job_id: str, folder: Path):
-    """
-    Heavy ingestion happens here.  IMPORTANT: we insert the RagChat
-    object first, then flip status to 'done'—avoids race condition.
-    """
-    try:
-        rag = run_ingestion(folder)           # ← your pipeline
-        jobs[job_id]["rag"] = rag             # ① store object
-        jobs[job_id]["status"] = "done"       # ② NOW mark done
-    except Exception as exc:
-        jobs[job_id]["status"] = "error"
-        jobs[job_id]["error"]  = str(exc)
-
-# ───────────────── progress / status ────────────────────────────
 @app.route("/progress/<job_id>")
 def progress(job_id):
     return render_template("progress.html", job_id=job_id)
 
 @app.route("/status/<job_id>")
 def status(job_id):
-    """
-    Only return JSON-serialisable fields so jsonify never crashes.
-    """
     j = jobs.get(job_id, {})
     return jsonify({
         "status": j.get("status"),      # pending | done | error | None
-        "error" : j.get("error")        # optional message
+        "error" : j.get("error")
     })
 
-# ───────────────── chat UI & API ────────────────────────────────
+# ─── ROUTES: CHAT UI & API ────────────────────────────────────────
+
 @app.route("/chat/<job_id>")
 def chat(job_id):
     if jobs.get(job_id, {}).get("status") != "done":
@@ -91,22 +88,23 @@ def chat(job_id):
 
 @app.route("/api/chat/<job_id>", methods=["POST"])
 def chat_api(job_id):
-    data      = request.get_json(force=True)
-    question  = data.get("message", "")
+    data     = request.get_json(force=True)
+    question = data.get("message", "").strip()
 
-    # ----- robust check that the job exists and ingestion finished -----
-    job = jobs.get(job_id)           # None if unknown job_id
-    rag = job.get("rag") if job else None
-    if rag is None:                  # covers: job unknown, still pending, or errored
-        return jsonify({
-            "ok": False,
-            "answer": "Ingestion not finished."
-        })
+    job = jobs.get(job_id, {})
+    rag = job.get("rag")
+    if rag is None:
+        return jsonify({"ok": False, "answer": "Ingestion not finished."})
 
-    # -------------------------------------------------------------------
+    # get the answer from RAG
     answer_html = rag.answer(question)
+
+    # **LOG THE CONVERSATION**
+    _log_conversation(job_id, question, answer_html)
+
     return jsonify({"ok": True, "answer": answer_html})
 
-# ───────────────── local dev entry-point ────────────────────────
+# ─── LOCAL DEV ENTRY POINT ───────────────────────────────────────
+
 if __name__ == "__main__":
     app.run(debug=True, host="0.0.0.0")
