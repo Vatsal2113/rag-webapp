@@ -1,3 +1,4 @@
+# ───────────────────────────── tests/test_rag.py ─────────────────────────
 from rag import clean_query, md_table_to_html
 
 def test_clean_query():

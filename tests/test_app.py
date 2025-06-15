@@ -1,3 +1,4 @@
+# ───────────────────────────── tests/test_app.py ──────────────────────────
 from app import _allowed_file, jobs
 
 def test_allowed_file():

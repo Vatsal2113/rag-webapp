@@ -1,4 +1,4 @@
-# tests/conftest.py
+# ─────────────────────────── tests/conftest.py ───────────────────────────
 import pathlib, pytest, sys, types
 from unittest import mock
 from app import app
@@ -20,7 +20,6 @@ def no_external(monkeypatch):
     monkeypatch.setenv("GEMINI_API_KEY", "fake")
 
     # --- Stub google.generativeai.GenerativeModel -----------------
-    import types
     fake_google = types.ModuleType("google")
     fake_genai  = types.ModuleType("generativeai")
     fake_genai.GenerativeModel = mock.Mock
@@ -29,7 +28,10 @@ def no_external(monkeypatch):
     sys.modules["google.generativeai"] = fake_genai
 
     # --- Stub embeddings model used in ingest.py ------------------
-    monkeypatch.setattr("ingest.HuggingFaceEmbeddings", mock.Mock, create=True)
+    # ⬇️ the only line that changed — now uses raising=False
+    monkeypatch.setattr("ingest.HuggingFaceEmbeddings",
+                        mock.Mock,
+                        raising=False)
 
 # ------------------------------------------------------------------
 # Tiny dummy-PDF fixture

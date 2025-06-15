@@ -1,3 +1,4 @@
+# ──────────────────────────── tests/test_ingest.py ───────────────────────
 from ingest import run_ingestion
 from rag import RagChat
 

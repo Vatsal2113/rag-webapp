@@ -1,3 +1,4 @@
+# ──────────────────────────── .github/workflows/ci.yml ───────────────────
 name: CI – build & unit-tests
 
 ###############################################################################
@@ -66,4 +67,3 @@ jobs:
         docker run -d --name app -p 5000:5000 test-img:ci
         sleep 5
         docker ps --filter "name=app" --filter "status=running" | grep app
-
